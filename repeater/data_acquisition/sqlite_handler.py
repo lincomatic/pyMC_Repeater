@@ -583,7 +583,7 @@ class SQLiteHandler:
                         transmitted, is_duplicate, drop_reason, src_hash, dst_hash, path_hash,
                         header, transport_codes, payload, payload_length, 
                         tx_delay_ms, packet_hash, original_path, forwarded_path, raw_packet,
-                        lbt_attempts, lbt_backoff_delays_ms, lbt_channel_busy
+                        lbt_attempts, lbt_backoff_delays_ms, lbt_channel_busy, iata, observer
                     FROM packets 
                     ORDER BY timestamp DESC
                     LIMIT ?
@@ -630,7 +630,7 @@ class SQLiteHandler:
                         transmitted, is_duplicate, drop_reason, src_hash, dst_hash, path_hash,
                         header, transport_codes, payload, payload_length, 
                         tx_delay_ms, packet_hash, original_path, forwarded_path, raw_packet,
-                        lbt_attempts, lbt_backoff_delays_ms, lbt_channel_busy
+                        lbt_attempts, lbt_backoff_delays_ms, lbt_channel_busy, iata, observer
                     FROM packets
                 """
                 
@@ -661,7 +661,7 @@ class SQLiteHandler:
                         transmitted, is_duplicate, drop_reason, src_hash, dst_hash, path_hash,
                         header, transport_codes, payload, payload_length, 
                         tx_delay_ms, packet_hash, original_path, forwarded_path, raw_packet,
-                        lbt_attempts, lbt_backoff_delays_ms, lbt_channel_busy
+                        lbt_attempts, lbt_backoff_delays_ms, lbt_channel_busy, iata, observer
                     FROM packets 
                     WHERE packet_hash = ?
                 """, (packet_hash,)).fetchone()
