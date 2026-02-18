@@ -31,7 +31,7 @@ keywords = ["mesh", "networking", "lora", "repeater", "daemon", "iot"]
 
 
 dependencies = [
-    "pymc_core[hardware] @ git+https://github.com/lincomatic/pyMC_core.git@mqtt",
+    "pymc_core @ git+https://github.com/lincomatic/pyMC_core.git@mqtt",
     "cherrypy>=18.0.0",
     "paho-mqtt>=1.6.0",
     "cherrypy-cors==1.7.0",
