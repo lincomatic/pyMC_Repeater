@@ -198,6 +198,18 @@ def _load_or_create_identity_key(path: Optional[str] = None) -> bytes:
 def get_radio_for_board(board_config: dict):
 
     radio_type = board_config.get("radio_type", "sx1262").lower()
+    print(f"Radio type: {radio_type}")
+    logger.info(f"Radio type: {radio_type}")
+
+    if radio_type == "mqtt":
+        from pymc_core.hardware.mqtt_listener import MQTTRadio
+        radio = MQTTRadio(config_file="/opt/pymc_repeater/mqtt_config.ini")
+        return radio;
+        
+    if radio_type == "sqlite":
+        from pymc_core.hardware.sqliteradio import SQLiteRadio
+        radio = SQLiteRadio()
+        return radio;
 
     if radio_type == "sx1262":
         from pymc_core.hardware.sx1262_wrapper import SX1262Radio

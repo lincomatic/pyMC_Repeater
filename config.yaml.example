@@ -1,5 +1,9 @@
 # Default Repeater Configuration
 
+# radio type can be sx1262 or mqtt.
+# mqtt is only a listener configure with /opt/pymc_repeater/mqtt_config.ini
+radio_type: sx1262
+
 repeater:
   # Node name for logging and identification
   node_name: "mesh-repeater-01"
@@ -312,3 +316,8 @@ web:
   # If not specified, uses the default built-in path
   # Example: /opt/custom-web-ui or /home/user/my-frontend
   # web_path: null
+
+  # Disable authentication for debugging (DO NOT USE IN PRODUCTION)
+  # When true, all API endpoints become accessible without login
+  # WARNING: Only enable this for local development/testing
+  disable_auth: false

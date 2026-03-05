@@ -43,7 +43,9 @@ class SQLiteHandler:
                         packet_hash TEXT,
                         original_path TEXT,
                         forwarded_path TEXT,
-                        raw_packet TEXT
+                        raw_packet TEXT,
+                        iata TEXT,
+                        observer TEXT
                     )
                 """)
                 
@@ -249,6 +251,33 @@ class SQLiteHandler:
                         (migration_name, time.time())
                     )
                     logger.info(f"Migration '{migration_name}' applied successfully")
+
+                # Migration 4: Add iata and observer to packets table
+                migration_name = "add_iata_and_observer_to_packets"
+                existing = conn.execute(
+                    "SELECT migration_name FROM migrations WHERE migration_name = ?",
+                    (migration_name,)
+                ).fetchone()
+
+                if not existing:
+                    # Check if iata / observer columns already exist
+                    cursor = conn.execute("PRAGMA table_info(packets)")
+                    columns = [column[1] for column in cursor.fetchall()]
+
+                    if "iata" not in columns:
+                        conn.execute("ALTER TABLE packets ADD COLUMN iata TEXT")
+                        logger.info("Added iata column to packets table")
+
+                    if "observer" not in columns:
+                        conn.execute("ALTER TABLE packets ADD COLUMN observer TEXT")
+                        logger.info("Added observer column to packets table")
+
+                    # Mark migration as applied
+                    conn.execute(
+                        "INSERT INTO migrations (migration_name, applied_at) VALUES (?, ?)",
+                        (migration_name, time.time())
+                    )
+                    logger.info(f"Migration '{migration_name}' applied successfully")
                 
                 conn.commit()
                 
@@ -344,14 +373,23 @@ class SQLiteHandler:
                 except Exception:
                     fwd_path_val = str(fwd_path)
 
+                # Normalize iata/observer: treat literal 'unk' (case-insensitive) as empty string; leave None as NULL
+                iata_val = record.get("iata")
+                if isinstance(iata_val, str) and iata_val.lower() == "unk":
+                    iata_val = ""
+                observer_val = record.get("observer")
+                if isinstance(observer_val, str) and observer_val.lower() == "unk":
+                    observer_val = ""
+
                 conn.execute("""
                     INSERT INTO packets (
                         timestamp, type, route, length, rssi, snr, score,
                         transmitted, is_duplicate, drop_reason, src_hash, dst_hash, path_hash,
                         header, transport_codes, payload, payload_length, 
                         tx_delay_ms, packet_hash, original_path, forwarded_path, raw_packet,
+                        iata, observer,
                         lbt_attempts, lbt_backoff_delays_ms, lbt_channel_busy
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     record.get("timestamp", time.time()),
                     record.get("type", 0),
@@ -375,6 +413,8 @@ class SQLiteHandler:
                     orig_path_val,
                     fwd_path_val,
                     record.get("raw_packet"),
+                    iata_val,
+                    observer_val,
                     record.get("lbt_attempts", 0),
                     json.dumps(record.get("lbt_backoff_delays_ms")) if record.get("lbt_backoff_delays_ms") else None,
                     int(bool(record.get("lbt_channel_busy", False)))
@@ -543,7 +583,7 @@ class SQLiteHandler:
                         transmitted, is_duplicate, drop_reason, src_hash, dst_hash, path_hash,
                         header, transport_codes, payload, payload_length, 
                         tx_delay_ms, packet_hash, original_path, forwarded_path, raw_packet,
-                        lbt_attempts, lbt_backoff_delays_ms, lbt_channel_busy
+                        lbt_attempts, lbt_backoff_delays_ms, lbt_channel_busy, iata, observer
                     FROM packets 
                     ORDER BY timestamp DESC
                     LIMIT ?
@@ -591,7 +631,7 @@ class SQLiteHandler:
                         transmitted, is_duplicate, drop_reason, src_hash, dst_hash, path_hash,
                         header, transport_codes, payload, payload_length, 
                         tx_delay_ms, packet_hash, original_path, forwarded_path, raw_packet,
-                        lbt_attempts, lbt_backoff_delays_ms, lbt_channel_busy
+                        lbt_attempts, lbt_backoff_delays_ms, lbt_channel_busy, iata, observer
                     FROM packets
                 """
                 
@@ -623,7 +663,7 @@ class SQLiteHandler:
                         transmitted, is_duplicate, drop_reason, src_hash, dst_hash, path_hash,
                         header, transport_codes, payload, payload_length, 
                         tx_delay_ms, packet_hash, original_path, forwarded_path, raw_packet,
-                        lbt_attempts, lbt_backoff_delays_ms, lbt_channel_busy
+                        lbt_attempts, lbt_backoff_delays_ms, lbt_channel_busy, iata, observer
                     FROM packets 
                     WHERE packet_hash = ?
                 """, (packet_hash,)).fetchone()

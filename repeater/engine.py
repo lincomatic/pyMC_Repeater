@@ -284,6 +284,8 @@ class RepeaterHandler(BaseHandler):
             "lbt_attempts": lbt_attempts if transmitted else 0,
             "lbt_backoff_delays_ms": lbt_backoff_delays_ms if transmitted and lbt_backoff_delays_ms else None,
             "lbt_channel_busy": lbt_channel_busy if transmitted else False,
+            "iata": packet._pktinfo.iata if hasattr(packet, "_pktinfo") and hasattr(packet._pktinfo, "iata") else None,
+            "observer": packet._pktinfo.observer if hasattr(packet, "_pktinfo") and hasattr(packet._pktinfo, "observer") else None,
         }
 
         # Store packet record to persistent storage

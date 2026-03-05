@@ -471,6 +471,7 @@ class HTTPStatsServer:
                 "jwt_handler": self.jwt_handler,
                 "token_manager": self.token_manager,
                 "security_config": self.config.get("security", {}),
+                "web_config": self.config.get("web", {}),
             })
 
             # Completely disable access logging
