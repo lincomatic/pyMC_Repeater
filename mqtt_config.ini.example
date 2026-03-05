@@ -1,0 +1,9 @@
+[mqtt]
+mqtt_url=mqtt.yourdomain.com
+mqtt_port=8883
+tls_insecure=n
+mqtt_username=user
+mqtt_password=pass
+#mqtt_topics = meshcore/+/+/packets
+mqtt_topics=  meshcore/LAX/+/packets, meshcore/SAN/+/packets, meshcore/OXR/+/pa\
+ckets, meshcore/PSP/+/packets

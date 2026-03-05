@@ -13,6 +13,16 @@ def check_auth():
     Sets cherrypy.request.user on success.
     Returns 401 JSON response on failure.
     """
+    # Check if authentication is disabled in config (for debugging)
+    web_config = cherrypy.config.get("web_config", {})
+    if web_config.get("disable_auth", False):
+        logger.warning("Authentication disabled via config - DEBUG MODE ACTIVE")
+        cherrypy.request.user = {
+            "username": "debug",
+            "auth_type": "config_bypass"
+        }
+        return
+    
     # Skip auth check for OPTIONS requests (CORS preflight)
     if cherrypy.request.method == "OPTIONS":
         return
