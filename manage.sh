@@ -70,6 +70,10 @@ main() {
             echo "    ✗ Failed to update pymc_core."
             return 1
         fi
+        
+
+        echo ""
+        echo "✓ All packages including pymc_core reinstalled successfully"
 
         echo "Updating repeater package and stable dependencies..."
         if python3 -m pip install --break-system-packages .; then
