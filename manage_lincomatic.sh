@@ -4,6 +4,23 @@
 main() {
     set -e
 
+<<<<<<< HEAD
+    INSTALL_DIR="/opt/pymc_repeater"
+    CONFIG_DIR="/etc/pymc_repeater"
+    LOG_DIR="/var/log/pymc_repeater"
+    SERVICE_USER="repeater"
+    SERVICE_NAME="pymc-repeater"
+
+    # --- Helper Functions (Inside main to ensure memory loading) ---
+
+    show_info() {
+        if [ -t 0 ]; then
+            $DIALOG --backtitle "pyMC Repeater" --title "$1" --msgbox "$2" 12 70
+        else
+            echo -e "\nINFO [$1]: $2"
+        fi
+    }
+=======
 INSTALL_DIR="/opt/pymc_repeater"
 CONFIG_DIR="/etc/pymc_repeater"
 LOG_DIR="/var/log/pymc_repeater"
@@ -474,6 +491,7 @@ EOF
         show_error "Installation completed but service failed to start!\n\nCheck logs from the main menu for details."
     fi
 }
+>>>>>>> upstream/feat/newRadios
 
     show_error() {
         if [ -t 0 ]; then
@@ -481,6 +499,43 @@ EOF
         else
             echo -e "\nERROR: $1"
         fi
+<<<<<<< HEAD
+    }
+
+    ask_yes_no() {
+        if [ -t 0 ]; then
+            $DIALOG --backtitle "pyMC Repeater" --title "$1" --yesno "$2" 10 70
+        else
+            # If not interactive, assume yes
+            return 0
+        fi
+    }
+
+    service_exists() {
+        systemctl list-unit-files | grep -q "^$SERVICE_NAME.service"
+    }
+
+    is_installed() {
+        [ -d "$INSTALL_DIR" ] && service_exists
+    }
+
+    is_running() {
+        systemctl is-active "$SERVICE_NAME" >/dev/null 2>&1
+    }
+
+    get_version() {
+        if [ -f "$INSTALL_DIR/repeater/_version.py" ]; then
+            grep "^__version__ = version = " "$INSTALL_DIR/repeater/_version.py" | cut -d"'" -f2 2>/dev/null || echo "unknown"
+        elif [ -f "$INSTALL_DIR/pyproject.toml" ]; then
+            grep "^version" "$INSTALL_DIR/pyproject.toml" | cut -d'"' -f2 2>/dev/null || echo "unknown"
+        else
+            echo "not installed"
+        fi
+    }
+
+    run_pip_install() {
+        echo "=== Updating Dependencies ==="
+=======
     fi
 }
         
@@ -642,12 +697,17 @@ EOF
         cd "$SCRIPT_DIR"
         
         # Suppress pip root user warnings
+>>>>>>> upstream/feat/newRadios
         export PIP_ROOT_USER_ACTION=ignore
         
         echo "Forcing fresh pull of pymc_core [hardware] from GitHub (@mqtt)..."
         if python3 -m pip install --break-system-packages --force-reinstall --no-cache-dir "pymc_core[hardware] @ git+https://github.com/lincomatic/pyMC_core.git@mqtt"; then
             echo "    ✓ pymc_core updated."
         else
+<<<<<<< HEAD
+            echo "    ✗ Failed to update pymc_core."
+            return 1
+=======
             export SETUPTOOLS_SCM_PRETEND_VERSION="1.0.5"
         fi
         
@@ -663,12 +723,18 @@ EOF
         else
             echo ""
             echo "⚠ Package update failed, but continuing..."
+>>>>>>> upstream/feat/newRadios
         fi
         
 
         echo ""
         echo "✓ All packages including pymc_core reinstalled successfully"
 
+<<<<<<< HEAD
+        echo "Updating repeater package and stable dependencies..."
+        if python3 -m pip install --break-system-packages .; then
+            echo "    ✓ Repeater installation updated."
+=======
         
         echo "[8/9] Starting service..."
         systemctl daemon-reload
@@ -971,6 +1037,7 @@ validate_and_update_config() {
             mv "$temp_merged" "$config_file"
             echo "    ✓ Configuration merged successfully"
             echo "    ✓ User settings preserved, new options added"
+>>>>>>> upstream/feat/newRadios
             return 0
         else
             echo "    ✗ Repeater installation failed."
@@ -1113,6 +1180,23 @@ validate_and_update_config() {
     if [ -z "$1" ]; then
         show_main_menu
     else
+<<<<<<< HEAD
+        case "$1" in
+            install)   install_repeater ;;
+            upgrade)   upgrade_repeater ;;
+            reset)     reset_repeater ;;
+            uninstall) uninstall_repeater ;;
+            start|stop|restart) systemctl "$1" "$SERVICE_NAME" ;;
+            status)    show_detailed_status ;;
+            logs)      journalctl -u "$SERVICE_NAME" -f ;;
+            *)         echo "Usage: $0 {install|upgrade|reset|uninstall|start|stop|restart|status|logs}" ; exit 1 ;;
+        esac
+    fi
+}
+
+# Load the entire script into memory and execute
+main "$@"
+=======
         echo "    ✗ Config merge failed, keeping original"
         rm -f "$temp_merged" "$stripped_user"
         return 1
@@ -1206,3 +1290,4 @@ esac
 while true; do
     show_main_menu
 done
+>>>>>>> upstream/feat/newRadios

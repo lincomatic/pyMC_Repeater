@@ -19,7 +19,13 @@ class StorageCollector:
     def __init__(self, config: dict, local_identity=None, repeater_handler=None):
         self.config = config
         self.repeater_handler = repeater_handler
-        self.storage_dir = Path(config.get("storage_dir", "/var/lib/pymc_repeater"))
+
+        storage_dir_cfg = (
+            config.get("storage", {}).get("storage_dir")
+            or config.get("storage_dir")
+            or "/var/lib/pymc_repeater"
+        )
+        self.storage_dir = Path(storage_dir_cfg)
         self.storage_dir.mkdir(parents=True, exist_ok=True)
 
         node_name = config.get("repeater", {}).get("node_name", "unknown")
@@ -202,6 +208,18 @@ class StorageCollector:
         noise_record = {"timestamp": time.time(), "noise_floor_dbm": noise_floor_dbm}
         self.sqlite_handler.store_noise_floor(noise_record)
         self.mqtt_handler.publish(noise_record, "noise_floor")
+
+    def record_crc_errors(self, count: int):
+        """Record a batch of CRC errors detected since last poll."""
+        crc_record = {"timestamp": time.time(), "count": count}
+        self.sqlite_handler.store_crc_errors(crc_record)
+        self.mqtt_handler.publish(crc_record, "crc_errors")
+
+    def get_crc_error_count(self, hours: int = 24) -> int:
+        return self.sqlite_handler.get_crc_error_count(hours)
+
+    def get_crc_error_history(self, hours: int = 24, limit: int = None) -> list:
+        return self.sqlite_handler.get_crc_error_history(hours, limit)
 
     def get_packet_stats(self, hours: int = 24) -> dict:
         return self.sqlite_handler.get_packet_stats(hours)

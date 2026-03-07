@@ -29,6 +29,20 @@ logger = logging.getLogger("RepeaterHandler")
 
 NOISE_FLOOR_INTERVAL = 30.0  # seconds
 
+LOOP_DETECT_OFF = "off"
+LOOP_DETECT_MINIMAL = "minimal"
+LOOP_DETECT_MODERATE = "moderate"
+LOOP_DETECT_STRICT = "strict"
+
+# Thresholds for 1-byte path hashes loop detection.
+# Count how many times our own hash already exists in the incoming FLOOD path.
+# If occurrences >= threshold, treat as loop and drop.
+LOOP_DETECT_MAX_COUNTERS = {
+    LOOP_DETECT_MINIMAL: 4,
+    LOOP_DETECT_MODERATE: 2,
+    LOOP_DETECT_STRICT: 1,
+}
+
 
 class RepeaterHandler(BaseHandler):
 
@@ -55,6 +69,9 @@ class RepeaterHandler(BaseHandler):
             "send_advert_interval_hours", 10
         )
         self.last_advert_time = time.time()
+        self.loop_detect_mode = self._normalize_loop_detect_mode(
+            config.get("mesh", {}).get("loop_detect", LOOP_DETECT_OFF)
+        )
 
         radio = dispatcher.radio if dispatcher else None
         if radio:
@@ -95,6 +112,7 @@ class RepeaterHandler(BaseHandler):
         self.last_noise_measurement = time.time()
         self.noise_floor_interval = NOISE_FLOOR_INTERVAL  # 30 seconds
         self._background_task = None
+        self._last_crc_error_count = 0  # Track radio counter for delta persistence
         
         # Cache transport keys for efficient lookup
         self._transport_keys_cache = None
@@ -402,6 +420,34 @@ class RepeaterHandler(BaseHandler):
 
         return True, ""
 
+    def _normalize_loop_detect_mode(self, mode) -> str:
+        if isinstance(mode, str):
+            normalized = mode.strip().lower()
+            if normalized in {
+                LOOP_DETECT_OFF,
+                LOOP_DETECT_MINIMAL,
+                LOOP_DETECT_MODERATE,
+                LOOP_DETECT_STRICT,
+            }:
+                return normalized
+        return LOOP_DETECT_OFF
+
+    def _get_loop_detect_mode(self) -> str:
+        return self.loop_detect_mode
+
+    def _is_flood_looped(self, packet: Packet, mode: Optional[str] = None) -> bool:
+        mode = mode or self._get_loop_detect_mode()
+        if mode == LOOP_DETECT_OFF:
+            return False
+
+        max_counter = LOOP_DETECT_MAX_COUNTERS.get(mode)
+        if max_counter is None:
+            return False
+
+        path = packet.path or bytearray()
+        local_count = sum(1 for hop in path if hop == self.local_hash)
+        return local_count >= max_counter
+
     def _check_transport_codes(self, packet: Packet) -> Tuple[bool, str]:
 
         if not self.storage:
@@ -511,10 +557,17 @@ class RepeaterHandler(BaseHandler):
                 packet.drop_reason = "Global flood policy disabled"
                 return None
 
+        mode = self._get_loop_detect_mode()
+        if self._is_flood_looped(packet, mode):
+            packet.drop_reason = f"FLOOD loop detected ({mode})"
+            return None
+
         # Suppress duplicates
         if self.is_duplicate(packet):
             packet.drop_reason = "Duplicate"
             return None
+        
+        self.mark_seen(packet)
 
         if packet.path is None:
             packet.path = bytearray()
@@ -524,11 +577,21 @@ class RepeaterHandler(BaseHandler):
         packet.path.append(self.local_hash)
         packet.path_len = len(packet.path)
 
-        self.mark_seen(packet)
-
         return packet
 
     def direct_forward(self, packet: Packet) -> Optional[Packet]:
+
+        # Validate packet (empty payload, oversized path, etc.)
+        valid, reason = self.validate_packet(packet)
+        if not valid:
+            packet.drop_reason = reason
+            return None
+
+        # Check if packet is marked do-not-retransmit
+        if packet.is_marked_do_not_retransmit():
+            if not packet.drop_reason:
+                packet.drop_reason = "Marked do not retransmit"
+            return None
 
         # Check if we're the next hop
         if not packet.path or len(packet.path) == 0:
@@ -545,11 +608,10 @@ class RepeaterHandler(BaseHandler):
             packet.drop_reason = "Duplicate"
             return None
 
-        original_path = list(packet.path)
+        self.mark_seen(packet)
+
         packet.path = bytearray(packet.path[1:])
         packet.path_len = len(packet.path)
-
-        self.mark_seen(packet)
 
         return packet
 
@@ -699,6 +761,10 @@ class RepeaterHandler(BaseHandler):
         # Get current noise floor from radio
         noise_floor_dbm = self.get_noise_floor()
 
+        # Get CRC error count from radio hardware
+        radio = self.dispatcher.radio if self.dispatcher else None
+        crc_error_count = getattr(radio, "crc_error_count", 0) if radio else 0
+
         # Get neighbors from database
         neighbors = self.storage.get_neighbors() if self.storage else {}
 
@@ -715,6 +781,7 @@ class RepeaterHandler(BaseHandler):
             "neighbors": neighbors,
             "uptime_seconds": uptime_seconds,
             "noise_floor_dbm": noise_floor_dbm,
+            "crc_error_count": crc_error_count,
             # Add configuration data
             "config": {
                 "node_name": repeater_config.get("node_name", "Unknown"),
@@ -727,6 +794,9 @@ class RepeaterHandler(BaseHandler):
                     "longitude": repeater_config.get("longitude", 0.0),
                     "max_flood_hops": repeater_config.get("max_flood_hops", 3),
                     "advert_interval_minutes": repeater_config.get("advert_interval_minutes", 120),
+                    "advert_rate_limit": repeater_config.get("advert_rate_limit", {}),
+                    "advert_penalty_box": repeater_config.get("advert_penalty_box", {}),
+                    "advert_adaptive": repeater_config.get("advert_adaptive", {}),
                 },
                 "radio": self.config.get("radio", {}),  # Read from live config, not cached radio_config
                 "duty_cycle": {
@@ -759,6 +829,7 @@ class RepeaterHandler(BaseHandler):
                 # Check noise floor recording (every 30 seconds)
                 if current_time - self.last_noise_measurement >= self.noise_floor_interval:
                     await self._record_noise_floor_async()
+                    await self._record_crc_errors_async()
                     self.last_noise_measurement = current_time
 
                 # Check advert sending (every N hours)
@@ -794,6 +865,22 @@ class RepeaterHandler(BaseHandler):
         except Exception as e:
             logger.error(f"Error recording noise floor: {e}")
 
+    async def _record_crc_errors_async(self):
+        """Persist CRC error delta from the radio hardware counter."""
+        if not self.storage:
+            return
+
+        try:
+            radio = self.dispatcher.radio if self.dispatcher else None
+            current = getattr(radio, "crc_error_count", 0) if radio else 0
+            delta = current - self._last_crc_error_count
+            if delta > 0:
+                self.storage.record_crc_errors(delta)
+                logger.debug(f"Recorded {delta} CRC errors (total: {current})")
+            self._last_crc_error_count = current
+        except Exception as e:
+            logger.error(f"Error recording CRC errors: {e}")
+
     async def _send_periodic_advert_async(self):
         logger.info(
             f"Periodic advert timer triggered (interval: {self.send_advert_interval_hours}h)"
@@ -823,6 +910,9 @@ class RepeaterHandler(BaseHandler):
             self.score_threshold = repeater_config.get("score_threshold", 0.3)
             self.send_advert_interval_hours = repeater_config.get("send_advert_interval_hours", 10)
             self.cache_ttl = repeater_config.get("cache_ttl", 60)
+            self.loop_detect_mode = self._normalize_loop_detect_mode(
+                self.config.get("mesh", {}).get("loop_detect", LOOP_DETECT_OFF)
+            )
             
             # Note: Radio config changes require restart as they affect hardware
             # Note: Airtime manager has its own config reference that gets updated

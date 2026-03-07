@@ -156,13 +156,18 @@ def update_global_flood_policy(allow: bool, config_path: Optional[str] = None) -
 def _load_or_create_identity_key(path: Optional[str] = None) -> bytes:
 
     if path is None:
-        # Follow XDG spec
-        xdg_config_home = os.environ.get("XDG_CONFIG_HOME")
-        if xdg_config_home:
-            config_dir = Path(xdg_config_home) / "pymc_repeater"
+        # Check system-wide location first (matches config.yaml location)
+        system_key_path = Path("/etc/pymc_repeater/identity.key")
+        if system_key_path.exists():
+            key_path = system_key_path
         else:
-            config_dir = Path.home() / ".config" / "pymc_repeater"
-        key_path = config_dir / "identity.key"
+            # Follow XDG spec
+            xdg_config_home = os.environ.get("XDG_CONFIG_HOME")
+            if xdg_config_home:
+                config_dir = Path(xdg_config_home) / "pymc_repeater"
+            else:
+                config_dir = Path.home() / ".config" / "pymc_repeater"
+            key_path = config_dir / "identity.key"
     else:
         key_path = Path(path)
 
@@ -173,8 +178,8 @@ def _load_or_create_identity_key(path: Optional[str] = None) -> bytes:
             with open(key_path, "rb") as f:
                 encoded = f.read()
                 key = base64.b64decode(encoded)
-                if len(key) != 32:
-                    raise ValueError(f"Invalid key length: {len(key)}, expected 32")
+                if len(key) not in (32, 64):
+                    raise ValueError(f"Invalid key length: {len(key)}, expected 32 or 64")
                 logger.info(f"Loaded existing identity key from {key_path}")
                 return key
         except Exception as e:
@@ -197,6 +202,15 @@ def _load_or_create_identity_key(path: Optional[str] = None) -> bytes:
 
 def get_radio_for_board(board_config: dict):
 
+    def _parse_int(value, *, default=None) -> int:
+        if value is None:
+            return default
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str):
+            return int(value.strip().rstrip(','), 0)
+        raise ValueError(f"Invalid int value type: {type(value)}")
+
     radio_type = board_config.get("radio_type", "sx1262").lower()
     print(f"Radio type: {radio_type}")
     logger.info(f"Radio type: {radio_type}")
@@ -211,7 +225,7 @@ def get_radio_for_board(board_config: dict):
         radio = SQLiteRadio()
         return radio;
 
-    if radio_type == "sx1262":
+    if radio_type in ("sx1262", "sx1262_ch341"):
         from pymc_core.hardware.sx1262_wrapper import SX1262Radio
 
         # Get radio and SPI configuration - all settings must be in config file
@@ -223,19 +237,36 @@ def get_radio_for_board(board_config: dict):
         if not radio_config:
             raise ValueError("Missing 'radio' section in configuration file")
 
-        # Build config with required fields - no defaults
+        # CH341 integration: swap SPI transport + GPIO backend to CH341
+        if radio_type == "sx1262_ch341":
+            ch341_cfg = board_config.get("ch341")
+            if not ch341_cfg:
+                raise ValueError("Missing 'ch341' section in configuration file")
+
+            from pymc_core.hardware.lora.LoRaRF.SX126x import set_spi_transport
+            from pymc_core.hardware.transports.ch341_spi_transport import CH341SPITransport
+
+            vid = _parse_int(ch341_cfg.get("vid"), default=0x1A86)
+            pid = _parse_int(ch341_cfg.get("pid"), default=0x5512)
+
+            # Create CH341 transport (also configures CH341 GPIO manager globally)
+            ch341_spi = CH341SPITransport(vid=vid, pid=pid, auto_setup_gpio=True)
+            set_spi_transport(ch341_spi)
+
         combined_config = {
-            "bus_id": spi_config["bus_id"],
-            "cs_id": spi_config["cs_id"],
-            "cs_pin": spi_config["cs_pin"],
-            "reset_pin": spi_config["reset_pin"],
-            "busy_pin": spi_config["busy_pin"],
-            "irq_pin": spi_config["irq_pin"],
-            "txen_pin": spi_config["txen_pin"],
-            "rxen_pin": spi_config["rxen_pin"],
-            "txled_pin": spi_config.get("txled_pin", -1),
-            "rxled_pin": spi_config.get("rxled_pin", -1),
+            "bus_id": _parse_int(spi_config["bus_id"]),
+            "cs_id": _parse_int(spi_config["cs_id"]),
+            "cs_pin": _parse_int(spi_config["cs_pin"]),
+            "reset_pin": _parse_int(spi_config["reset_pin"]),
+            "busy_pin": _parse_int(spi_config["busy_pin"]),
+            "irq_pin": _parse_int(spi_config["irq_pin"]),
+            "txen_pin": _parse_int(spi_config["txen_pin"]),
+            "rxen_pin": _parse_int(spi_config["rxen_pin"]),
+            "txled_pin": _parse_int(spi_config.get("txled_pin", -1), default=-1),
+            "rxled_pin": _parse_int(spi_config.get("rxled_pin", -1), default=-1),
+            "en_pin": _parse_int(spi_config.get("en_pin", -1), default=-1),
             "use_dio3_tcxo": spi_config.get("use_dio3_tcxo", False),
+            "dio3_tcxo_voltage": float(spi_config.get("dio3_tcxo_voltage", 1.8)),
             "use_dio2_rf": spi_config.get("use_dio2_rf", False),
             "is_waveshare": spi_config.get("is_waveshare", False),
             "frequency": int(radio_config["frequency"]),
@@ -247,6 +278,13 @@ def get_radio_for_board(board_config: dict):
             "sync_word": radio_config["sync_word"],
         }
 
+        # Add optional GPIO parameters if specified in config
+        # These wont be supported by older versions of pymc_core
+        if "gpio_chip" in spi_config:
+            combined_config["gpio_chip"] = _parse_int(spi_config["gpio_chip"], default=0)
+        if "use_gpiod_backend" in spi_config:
+            combined_config["use_gpiod_backend"] = spi_config["use_gpiod_backend"]
+
         radio = SX1262Radio.get_instance(**combined_config)
 
         if hasattr(radio, "_initialized") and not radio._initialized:
@@ -257,5 +295,6 @@ def get_radio_for_board(board_config: dict):
 
         return radio
 
-    else:
-        raise RuntimeError(f"Unknown radio type: {radio_type}. Supported: sx1262")
+    raise RuntimeError(
+        f"Unknown radio type: {radio_type}. Supported: sx1262, sx1262_ch341"
+    )

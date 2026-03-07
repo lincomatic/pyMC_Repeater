@@ -94,6 +94,13 @@ class ConfigManager:
                         self.daemon.repeater_handler.reload_runtime_config()
                         logger.info("Reloaded RepeaterHandler runtime config")
             
+            # Also reload advert_helper config if repeater section changed
+            if self.daemon and hasattr(self.daemon, 'advert_helper') and self.daemon.advert_helper:
+                if 'repeater' in sections:
+                    if hasattr(self.daemon.advert_helper, 'reload_config'):
+                        self.daemon.advert_helper.reload_config()
+                        logger.info("Reloaded AdvertHelper config")
+            
             return True
             
         except Exception as e:

@@ -43,6 +43,7 @@ logger = logging.getLogger("HTTPServer")
 # POST   /api/set_duty_cycle {"enabled": true|false} - Enable/disable duty cycle
 # POST   /api/update_duty_cycle_config {"enabled": true, "on_time": 300, "off_time": 60} - Update duty cycle config
 # POST   /api/update_radio_config - Update radio configuration
+# POST   /api/update_advert_rate_limit_config - Update advert rate limiting settings
 
 # Packets
 # GET    /api/packet_stats?hours=24 - Get packet statistics
@@ -71,6 +72,7 @@ logger = logging.getLogger("HTTPServer")
 # Adverts & Contacts
 # GET    /api/adverts_by_contact_type?contact_type=X&limit=100&hours=24 - Get adverts by contact type
 # GET    /api/advert?advert_id=123 - Get specific advert
+# GET    /api/advert_rate_limit_stats - Get advert rate limiting and adaptive tier stats
 
 # Transport Keys
 # GET    /api/transport_keys - List all transport keys
@@ -262,7 +264,12 @@ class APIEndpoints:
             import json
 
             # Check config-based location first, then development location
-            config_dir = Path(self.config.get("storage_dir", "/var/lib/pymc_repeater"))
+            storage_dir_cfg = (
+                self.config.get("storage", {}).get("storage_dir")
+                or self.config.get("storage_dir")
+                or "/var/lib/pymc_repeater"
+            )
+            config_dir = Path(storage_dir_cfg)
             installed_path = config_dir / 'radio-settings.json'
             dev_path = os.path.join(os.path.dirname(__file__), '..', '..', 'radio-settings.json')
             
@@ -301,7 +308,12 @@ class APIEndpoints:
             import json
             
             # Check config-based location first, then development location
-            config_dir = Path(self.config.get("storage_dir", "/var/lib/pymc_repeater"))
+            storage_dir_cfg = (
+                self.config.get("storage", {}).get("storage_dir")
+                or self.config.get("storage_dir")
+                or "/var/lib/pymc_repeater"
+            )
+            config_dir = Path(storage_dir_cfg)
             installed_path = config_dir / 'radio-presets.json'
             dev_path = os.path.join(os.path.dirname(__file__), '..', '..', 'radio-presets.json')
             
@@ -353,7 +365,12 @@ class APIEndpoints:
             
             # Load hardware configuration - check installed path first, then dev path
             import json
-            config_dir = Path(self.config.get("storage_dir", "/var/lib/pymc_repeater"))
+            storage_dir_cfg = (
+                self.config.get("storage", {}).get("storage_dir")
+                or self.config.get("storage_dir")
+                or "/var/lib/pymc_repeater"
+            )
+            config_dir = Path(storage_dir_cfg)
             installed_path = config_dir / 'radio-settings.json'
             dev_path = os.path.join(os.path.dirname(__file__), '..', '..', 'radio-settings.json')
             
@@ -387,6 +404,22 @@ class APIEndpoints:
             if 'security' not in config_yaml['repeater']:
                 config_yaml['repeater']['security'] = {}
             config_yaml['repeater']['security']['admin_password'] = admin_password
+            
+            # Update radio backend selection (radio_type + optional CH341 USB adapter info)
+            if 'radio_type' in hw_config:
+                config_yaml['radio_type'] = hw_config.get('radio_type')
+            
+            # CH341 settings can be provided as top-level fields or nested object
+            ch341_cfg = hw_config.get('ch341') if isinstance(hw_config.get('ch341'), dict) else None
+            vid = (ch341_cfg or {}).get('vid', hw_config.get('vid'))
+            pid = (ch341_cfg or {}).get('pid', hw_config.get('pid'))
+            if vid is not None or pid is not None:
+                if 'ch341' not in config_yaml:
+                    config_yaml['ch341'] = {}
+                if vid is not None:
+                    config_yaml['ch341']['vid'] = vid
+                if pid is not None:
+                    config_yaml['ch341']['pid'] = pid
             
             # Update radio settings - convert MHz/kHz to Hz
             if 'radio' not in config_yaml:
@@ -439,6 +472,8 @@ class APIEndpoints:
             # Hardware flags
             if 'use_dio3_tcxo' in hw_config:
                 config_yaml['sx1262']['use_dio3_tcxo'] = hw_config.get('use_dio3_tcxo', False)
+            if 'dio3_tcxo_voltage' in hw_config:
+                config_yaml['sx1262']['dio3_tcxo_voltage'] = hw_config.get('dio3_tcxo_voltage', 1.8)
             if 'use_dio2_rf' in hw_config:
                 config_yaml['sx1262']['use_dio2_rf'] = hw_config.get('use_dio2_rf', False)
             if 'is_waveshare' in hw_config:
@@ -458,8 +493,8 @@ class APIEndpoints:
                 import time
                 time.sleep(2)  # Give time for response to be sent
                 try:
-                    # Use systemctl without sudo - polkit rules allow the repeater user to restart the service
-                    subprocess.run(['systemctl', 'restart', 'pymc-repeater'], check=False)
+                    from repeater.service_utils import restart_service
+                    restart_service()
                 except Exception as e:
                     logger.error(f"Failed to restart service: {e}")
             
@@ -645,6 +680,170 @@ class APIEndpoints:
             raise
         except Exception as e:
             logger.error(f"Error updating duty cycle config: {e}")
+            return self._error(str(e))
+
+    @cherrypy.expose
+    @cherrypy.tools.json_out()
+    @cherrypy.tools.json_in()
+    def update_advert_rate_limit_config(self):
+        """Update advert rate limiting configuration using ConfigManager.
+        
+        POST /api/update_advert_rate_limit_config
+        Body: {
+            "rate_limit_enabled": true,
+            "bucket_capacity": 2,
+            "refill_tokens": 1,
+            "refill_interval_seconds": 36000,
+            "min_interval_seconds": 3600,
+            "penalty_enabled": true,
+            "violation_threshold": 2,
+            "violation_decay_seconds": 43200,
+            "base_penalty_seconds": 21600,
+            "penalty_multiplier": 2.0,
+            "max_penalty_seconds": 86400,
+            "adaptive_enabled": true,
+            "ewma_alpha": 0.1,
+            "hysteresis_seconds": 300,
+            "quiet_max": 0.05,
+            "normal_max": 0.20,
+            "busy_max": 0.50
+        }
+        """
+        self._set_cors_headers()
+        
+        if cherrypy.request.method == "OPTIONS":
+            return ""
+        
+        try:
+            self._require_post()
+            data = cherrypy.request.json or {}
+            
+            applied = []
+            
+            # Ensure config sections exist
+            if "repeater" not in self.config:
+                self.config["repeater"] = {}
+            if "advert_rate_limit" not in self.config["repeater"]:
+                self.config["repeater"]["advert_rate_limit"] = {}
+            if "advert_penalty_box" not in self.config["repeater"]:
+                self.config["repeater"]["advert_penalty_box"] = {}
+            if "advert_adaptive" not in self.config["repeater"]:
+                self.config["repeater"]["advert_adaptive"] = {"thresholds": {}}
+            
+            rate_cfg = self.config["repeater"]["advert_rate_limit"]
+            penalty_cfg = self.config["repeater"]["advert_penalty_box"]
+            adaptive_cfg = self.config["repeater"]["advert_adaptive"]
+            
+            # Rate limit settings
+            if "rate_limit_enabled" in data:
+                rate_cfg["enabled"] = bool(data["rate_limit_enabled"])
+                applied.append(f"rate_limit={'enabled' if rate_cfg['enabled'] else 'disabled'}")
+            
+            if "bucket_capacity" in data:
+                cap = max(1, int(data["bucket_capacity"]))
+                rate_cfg["bucket_capacity"] = cap
+                applied.append(f"bucket_capacity={cap}")
+            
+            if "refill_tokens" in data:
+                tokens = max(1, int(data["refill_tokens"]))
+                rate_cfg["refill_tokens"] = tokens
+                applied.append(f"refill_tokens={tokens}")
+            
+            if "refill_interval_seconds" in data:
+                interval = max(60, int(data["refill_interval_seconds"]))
+                rate_cfg["refill_interval_seconds"] = interval
+                applied.append(f"refill_interval={interval}s")
+            
+            if "min_interval_seconds" in data:
+                min_int = max(0, int(data["min_interval_seconds"]))
+                rate_cfg["min_interval_seconds"] = min_int
+                applied.append(f"min_interval={min_int}s")
+            
+            # Penalty box settings
+            if "penalty_enabled" in data:
+                penalty_cfg["enabled"] = bool(data["penalty_enabled"])
+                applied.append(f"penalty={'enabled' if penalty_cfg['enabled'] else 'disabled'}")
+            
+            if "violation_threshold" in data:
+                thresh = max(1, int(data["violation_threshold"]))
+                penalty_cfg["violation_threshold"] = thresh
+                applied.append(f"violation_threshold={thresh}")
+            
+            if "violation_decay_seconds" in data:
+                decay = max(60, int(data["violation_decay_seconds"]))
+                penalty_cfg["violation_decay_seconds"] = decay
+                applied.append(f"violation_decay={decay}s")
+            
+            if "base_penalty_seconds" in data:
+                base = max(60, int(data["base_penalty_seconds"]))
+                penalty_cfg["base_penalty_seconds"] = base
+                applied.append(f"base_penalty={base}s")
+            
+            if "penalty_multiplier" in data:
+                mult = max(1.0, float(data["penalty_multiplier"]))
+                penalty_cfg["penalty_multiplier"] = mult
+                applied.append(f"penalty_multiplier={mult}")
+            
+            if "max_penalty_seconds" in data:
+                max_pen = max(60, int(data["max_penalty_seconds"]))
+                penalty_cfg["max_penalty_seconds"] = max_pen
+                applied.append(f"max_penalty={max_pen}s")
+            
+            # Adaptive settings
+            if "adaptive_enabled" in data:
+                adaptive_cfg["enabled"] = bool(data["adaptive_enabled"])
+                applied.append(f"adaptive={'enabled' if adaptive_cfg['enabled'] else 'disabled'}")
+            
+            if "ewma_alpha" in data:
+                alpha = max(0.01, min(1.0, float(data["ewma_alpha"])))
+                adaptive_cfg["ewma_alpha"] = alpha
+                applied.append(f"ewma_alpha={alpha}")
+            
+            if "hysteresis_seconds" in data:
+                hyst = max(0, int(data["hysteresis_seconds"]))
+                adaptive_cfg["hysteresis_seconds"] = hyst
+                applied.append(f"hysteresis={hyst}s")
+            
+            # Adaptive thresholds
+            if "thresholds" not in adaptive_cfg:
+                adaptive_cfg["thresholds"] = {}
+            
+            if "quiet_max" in data:
+                adaptive_cfg["thresholds"]["quiet_max"] = float(data["quiet_max"])
+                applied.append(f"quiet_max={data['quiet_max']}")
+            
+            if "normal_max" in data:
+                adaptive_cfg["thresholds"]["normal_max"] = float(data["normal_max"])
+                applied.append(f"normal_max={data['normal_max']}")
+            
+            if "busy_max" in data:
+                adaptive_cfg["thresholds"]["busy_max"] = float(data["busy_max"])
+                applied.append(f"busy_max={data['busy_max']}")
+            
+            if not applied:
+                return self._error("No valid settings provided")
+            
+            # Save to config file and live update daemon
+            result = self.config_manager.update_and_save(
+                updates={},
+                live_update=True,
+                live_update_sections=['repeater']
+            )
+            
+            logger.info(f"Advert rate limit config updated: {', '.join(applied)}")
+            
+            return self._success({
+                "applied": applied,
+                "persisted": result.get("saved", False),
+                "live_update": result.get("live_updated", False),
+                "restart_required": False,
+                "message": "Advert rate limit settings applied immediately."
+            })
+            
+        except cherrypy.HTTPError:
+            raise
+        except Exception as e:
+            logger.error(f"Error updating advert rate limit config: {e}")
             return self._error(str(e))
 
     @cherrypy.expose
@@ -1388,6 +1587,40 @@ class APIEndpoints:
             return self._error(e)
 
     @cherrypy.expose
+    @cherrypy.tools.json_out()
+    def crc_error_count(self, hours: int = 24):
+        """Return total CRC errors within the given time window."""
+        try:
+            storage = self._get_storage()
+            hours = int(hours)
+            count = storage.get_crc_error_count(hours=hours)
+            return self._success({
+                "crc_error_count": count,
+                "hours": hours
+            })
+        except Exception as e:
+            logger.error(f"Error fetching CRC error count: {e}")
+            return self._error(e)
+
+    @cherrypy.expose
+    @cherrypy.tools.json_out()
+    def crc_error_history(self, hours: int = 24, limit: int = None):
+        """Return CRC error records within the given time window."""
+        try:
+            storage = self._get_storage()
+            hours = int(hours)
+            limit = int(limit) if limit else None
+            history = storage.get_crc_error_history(hours=hours, limit=limit)
+            return self._success({
+                "history": history,
+                "hours": hours,
+                "count": len(history)
+            })
+        except Exception as e:
+            logger.error(f"Error fetching CRC error history: {e}")
+            return self._error(e)
+
+    @cherrypy.expose
     def cad_calibration_stream(self):
         cherrypy.response.headers['Content-Type'] = 'text/event-stream'
         cherrypy.response.headers['Cache-Control'] = 'no-cache'
@@ -1474,6 +1707,28 @@ class APIEndpoints:
             return self._error(f"Invalid parameter format: {e}")
         except Exception as e:
             logger.error(f"Error getting adverts by contact type: {e}")
+            return self._error(e)
+
+    @cherrypy.expose
+    @cherrypy.tools.json_out()
+    def advert_rate_limit_stats(self):
+        """Get advert rate limiting statistics and adaptive tier info."""
+        try:
+            if not self.daemon_instance or not hasattr(self.daemon_instance, 'advert_helper'):
+                return self._error("Advert helper not available")
+            
+            advert_helper = self.daemon_instance.advert_helper
+            if not advert_helper:
+                return self._error("Advert helper not initialized")
+            
+            if not hasattr(advert_helper, 'get_rate_limit_stats'):
+                return self._error("Rate limit stats not supported by this advert helper version")
+            
+            stats = advert_helper.get_rate_limit_stats()
+            return self._success(stats)
+            
+        except Exception as e:
+            logger.error(f"Error getting advert rate limit stats: {e}")
             return self._error(e)
 
     @cherrypy.expose
