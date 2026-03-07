@@ -29,7 +29,6 @@ classifiers = [
 keywords = ["mesh", "networking", "lora", "repeater", "daemon", "iot"]
 
 
-
 dependencies = [
     "pymc_core @ git+https://github.com/lincomatic/pyMC_core.git@mqtt",
     "cherrypy>=18.0.0",
@@ -43,6 +42,14 @@ dependencies = [
 
 
 [project.optional-dependencies]
+# SX1262/SPI support (Linux only; required for Raspberry Pi HATs)
+hardware = [
+    "pymc_core[hardware]",
+]
+# RRD metrics (Performance Metrics chart); system librrd required (e.g. apt install rrdtool)
+rrd = [
+    "rrdtool",
+]
 dev = [
     "pytest>=7.4.0",
     "pytest-asyncio>=0.21.0",
@@ -77,4 +84,3 @@ line_length = 100
 [tool.setuptools_scm]
 version_scheme = "guess-next-dev"
 local_scheme = "no-local-version"
-
