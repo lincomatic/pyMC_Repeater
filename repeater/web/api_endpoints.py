@@ -1470,6 +1470,8 @@ class APIEndpoints:
                 self.config["delays"] = {}
             if "repeater" not in self.config:
                 self.config["repeater"] = {}
+            if "mesh" not in self.config:
+                self.config["mesh"] = {}
 
             # Update TX power (up to 30 dBm for high-power radios)
             if "tx_power" in data:
@@ -1587,6 +1589,14 @@ class APIEndpoints:
                 self.config["repeater"]["advert_interval_minutes"] = mins
                 applied.append(f"advert.interval={mins}m")
 
+            # Update path hash mode (mesh: 0=1-byte, 1=2-byte, 2=3-byte)
+            if "path_hash_mode" in data:
+                phm = int(data["path_hash_mode"])
+                if phm not in (0, 1, 2):
+                    return self._error("Path hash mode must be 0 (1-byte), 1 (2-byte), or 2 (3-byte)")
+                self.config["mesh"]["path_hash_mode"] = phm
+                applied.append(f"path_hash_mode={phm}")
+
             # KISS modem settings (only when radio_type is kiss)
             if "kiss_port" in data or "kiss_baud_rate" in data:
                 if self.config.get("radio_type") != "kiss":
@@ -1613,7 +1623,9 @@ class APIEndpoints:
             if not applied:
                 return self._error("No valid settings provided")
 
-            live_sections = ["repeater", "delays", "radio", "mesh"]
+            live_sections = ["repeater", "delays", "radio"]
+            if "mesh" in self.config and any(k in data for k in ("path_hash_mode", "loop_detect")):
+                live_sections.append("mesh")
             if "kiss" in self.config:
                 live_sections.append("kiss")
             # Save to config file and live update daemon in one operation
@@ -2411,6 +2423,8 @@ class APIEndpoints:
                     "tcp_port": settings.get("tcp_port", 5000),
                     "bind_address": settings.get("bind_address", "0.0.0.0"),
                 }
+                if "tcp_timeout" in settings:
+                    comp_settings["tcp_timeout"] = settings["tcp_timeout"]
                 new_identity = {
                     "name": name,
                     "identity_key": identity_key,
@@ -2609,7 +2623,7 @@ class APIEndpoints:
                         identity["settings"] = {}
                     # Only allow companion settings
                     for k, v in data["settings"].items():
-                        if k in ("node_name", "tcp_port", "bind_address"):
+                        if k in ("node_name", "tcp_port", "bind_address", "tcp_timeout"):
                             identity["settings"][k] = v
 
                 companions[identity_index] = identity

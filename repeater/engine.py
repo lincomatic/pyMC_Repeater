@@ -923,6 +923,7 @@ class RepeaterHandler(BaseHandler):
                 "mesh": {
                     "loop_detect": self.config.get("mesh", {}).get("loop_detect", "off"),
                     "global_flood_allow": self.config.get("mesh", {}).get("global_flood_allow", True),
+                    "path_hash_mode": self.config.get("mesh", {}).get("path_hash_mode", 0),
                 },
             },
             "public_key": None,

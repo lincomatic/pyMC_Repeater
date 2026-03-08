@@ -4,7 +4,7 @@ import os
 import sys
 import time
 
-from repeater.companion.utils import validate_companion_node_name
+from repeater.companion.utils import validate_companion_node_name, normalize_companion_identity_key
 from repeater.config import get_radio_for_board, load_config, save_config
 from repeater.config_manager import ConfigManager
 from repeater.engine import RepeaterHandler
@@ -150,6 +150,19 @@ class RepeaterDaemon:
             # All received packets flow through router → helpers → repeater engine
             self.dispatcher.register_fallback_handler(self._router_callback)
             logger.info("Packet router registered as fallback (catches all packets)")
+
+            # Set default path hash mode for flood 0-hop packets (adverts, etc.)
+            path_hash_mode = self.config.get("mesh", {}).get("path_hash_mode", 0)
+            if path_hash_mode not in (0, 1, 2):
+                logger.warning(
+                    f"Invalid mesh.path_hash_mode={path_hash_mode}, must be 0/1/2; using 0"
+                )
+                path_hash_mode = 0
+            self.dispatcher.set_default_path_hash_mode(path_hash_mode)
+            mode_names = {0: "1-byte", 1: "2-byte", 2: "3-byte"}
+            logger.info(
+                f"Path hash mode set to {mode_names[path_hash_mode]} (mesh.path_hash_mode={path_hash_mode})"
+            )
 
             # Create processing helpers (handlers created internally)
             self.trace_helper = TraceHelper(
@@ -372,6 +385,10 @@ class RepeaterDaemon:
         sqlite_handler = None
         if self.repeater_handler and self.repeater_handler.storage:
             sqlite_handler = self.repeater_handler.storage.sqlite_handler
+        if not sqlite_handler and companions_config:
+            logger.warning(
+                "Companion persistence disabled: no storage (contacts/channels will not survive restart or disconnect)"
+            )
 
         radio_config = (
             self.repeater_handler.radio_config
@@ -391,7 +408,7 @@ class RepeaterDaemon:
 
                 if isinstance(identity_key, str):
                     try:
-                        identity_key_bytes = bytes.fromhex(identity_key)
+                        identity_key_bytes = bytes.fromhex(normalize_companion_identity_key(identity_key))
                     except ValueError as e:
                         logger.error(f"Companion '{name}' identity_key invalid hex: {e}")
                         continue
@@ -415,6 +432,8 @@ class RepeaterDaemon:
                 node_name = settings.get("node_name", name)
                 tcp_port = settings.get("tcp_port", 5000)
                 bind_address = settings.get("bind_address", "0.0.0.0")
+                tcp_timeout_raw = settings.get("tcp_timeout", 120)
+                client_idle_timeout_sec = None if tcp_timeout_raw == 0 else int(tcp_timeout_raw)
 
                 def _make_sync_node_name_to_config(companion_name: str):
                     """Return a callback that syncs node_name to config for this companion (binds name at creation)."""
@@ -508,6 +527,7 @@ class RepeaterDaemon:
                     companion_hash=companion_hash_str,
                     port=tcp_port,
                     bind_address=bind_address,
+                    client_idle_timeout_sec=client_idle_timeout_sec,
                     sqlite_handler=sqlite_handler,
                     local_hash=self.local_hash,
                     stats_getter=self._get_companion_stats,
@@ -527,7 +547,7 @@ class RepeaterDaemon:
 
                 logger.info(
                     f"Loaded companion '{name}': hash=0x{companion_hash:02x}, "
-                    f"port={tcp_port}, bind={bind_address}"
+                    f"port={tcp_port}, bind={bind_address}, client_idle_timeout_sec={client_idle_timeout_sec}"
                 )
 
             except Exception as e:
@@ -554,7 +574,7 @@ class RepeaterDaemon:
 
         if isinstance(identity_key, str):
             try:
-                identity_key_bytes = bytes.fromhex(identity_key)
+                identity_key_bytes = bytes.fromhex(normalize_companion_identity_key(identity_key))
             except ValueError as e:
                 raise ValueError(f"Companion '{name}' identity_key invalid hex: {e}") from e
         elif isinstance(identity_key, bytes):
@@ -592,6 +612,8 @@ class RepeaterDaemon:
         node_name = settings.get("node_name", name)
         tcp_port = settings.get("tcp_port", 5000)
         bind_address = settings.get("bind_address", "0.0.0.0")
+        tcp_timeout_raw = settings.get("tcp_timeout", 120)
+        client_idle_timeout_sec = None if tcp_timeout_raw == 0 else int(tcp_timeout_raw)
 
         bridge = RepeaterCompanionBridge(
             identity=identity,
@@ -658,6 +680,7 @@ class RepeaterDaemon:
             companion_hash=companion_hash_str,
             port=tcp_port,
             bind_address=bind_address,
+            client_idle_timeout_sec=client_idle_timeout_sec,
             sqlite_handler=sqlite_handler,
             local_hash=self.local_hash,
             stats_getter=self._get_companion_stats,
@@ -677,7 +700,7 @@ class RepeaterDaemon:
 
         logger.info(
             f"Hot-reload: Loaded companion '{name}': hash=0x{companion_hash:02x}, "
-            f"port={tcp_port}, bind={bind_address}"
+            f"port={tcp_port}, bind={bind_address}, client_idle_timeout_sec={client_idle_timeout_sec}"
         )
 
     async def _on_raw_rx_for_companions(self, data: bytes, rssi: int, snr: float) -> None:

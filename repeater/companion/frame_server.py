@@ -33,6 +33,7 @@ class CompanionFrameServer(_BaseFrameServer):
         companion_hash: str,
         port: int = 5000,
         bind_address: str = "0.0.0.0",
+        client_idle_timeout_sec: Optional[int] = 120,
         sqlite_handler=None,
         local_hash: Optional[int] = None,
         stats_getter=None,
@@ -43,6 +44,7 @@ class CompanionFrameServer(_BaseFrameServer):
             companion_hash=companion_hash,
             port=port,
             bind_address=bind_address,
+            client_idle_timeout_sec=client_idle_timeout_sec,
             device_model="pyMC-Repeater-Companion",
             device_version=None,  # use FIRMWARE_VER_CODE from pyMC_core
             build_date="13 Feb 2026",
@@ -164,3 +166,13 @@ class CompanionFrameServer(_BaseFrameServer):
             self.companion_hash,
             channels,
         )
+
+    async def stop(self) -> None:
+        """Persist contacts and channels before stopping (so they survive daemon restart)."""
+        if self.sqlite_handler:
+            try:
+                await self._save_contacts()
+                await self._save_channels()
+            except Exception as e:
+                logger.warning("Failed to persist contacts/channels on stop: %s", e)
+        await super().stop()
