@@ -328,6 +328,49 @@ class RepeaterHandler(BaseHandler):
         src_hash, dst_hash = self._packet_record_src_dst(packet, payload_type)
 
         # Record packet for charts
+<<<<<<< HEAD
+        packet_record = {
+            "timestamp": time.time(),
+            "header": (
+                f"0x{packet.header:02X}"
+                if hasattr(packet, "header") and packet.header is not None
+                else None
+            ),
+            "payload": (
+                packet.payload.hex() if hasattr(packet, "payload") and packet.payload else None
+            ),
+            "payload_length": (
+                len(packet.payload) if hasattr(packet, "payload") and packet.payload else 0
+            ),
+            "type": payload_type,
+            "route": route_type,
+            "length": len(packet.payload or b""),
+            "rssi": rssi,
+            "snr": snr,
+            "score": self.calculate_packet_score(
+                snr, len(packet.payload or b""), self.radio_config["spreading_factor"]
+            ),
+            "tx_delay_ms": tx_delay_ms,
+            "transmitted": transmitted,
+            "is_duplicate": is_dupe,
+            "packet_hash": pkt_hash[:16],
+            "drop_reason": drop_reason,
+            "path_hash": path_hash,
+            "src_hash": src_hash,
+            "dst_hash": dst_hash,
+            "original_path": original_path_hashes or None,
+            "forwarded_path": forwarded_path_hashes,
+            "path_hash_size": path_hash_size,
+            "raw_packet": packet.write_to().hex() if hasattr(packet, "write_to") else None,
+            "lbt_attempts": lbt_attempts if transmitted else 0,
+            "lbt_backoff_delays_ms": (
+                lbt_backoff_delays_ms if transmitted and lbt_backoff_delays_ms else None
+            ),
+            "lbt_channel_busy": lbt_channel_busy if transmitted else False,
+            "iata": packet._pktinfo.iata if hasattr(packet, "_pktinfo") and hasattr(packet._pktinfo, "iata") else None,
+            "observer": packet._pktinfo.observer if hasattr(packet, "_pktinfo") and hasattr(packet._pktinfo, "observer") else None,
+        }
+=======
         packet_record = self._build_packet_record(
             packet,
             payload_type,
@@ -347,9 +390,8 @@ class RepeaterHandler(BaseHandler):
             lbt_attempts=lbt_attempts,
             lbt_backoff_delays_ms=lbt_backoff_delays_ms,
             lbt_channel_busy=lbt_channel_busy,
-           	iata=packet._pktinfo.iata if hasattr(packet, "_pktinfo") and hasattr(packet._pktinfo, "iata") else None,
-            observer=packet._pktinfo.observer if hasattr(packet, "_pktinfo") and hasattr(packet._pktinfo, "observer") else None,
-         )
+        )
+>>>>>>> e0e807f65cef8d99c037c97eef673aa7f0468590
 
         # Store packet record to persistent storage
         # Skip LetsMesh only for invalid packets (not duplicates or operational drops)
@@ -501,8 +543,6 @@ class RepeaterHandler(BaseHandler):
         lbt_attempts: int = 0,
         lbt_backoff_delays_ms=None,
         lbt_channel_busy: bool = False,
-        iata: Optiona[str],
-        observer: Optional[str],
     ) -> dict:
         """Build a single packet_record dict for storage and recent_packets."""
         pkt_hash = packet.calculate_packet_hash().hex().upper()
@@ -540,8 +580,6 @@ class RepeaterHandler(BaseHandler):
             "lbt_attempts": lbt_attempts,
             "lbt_backoff_delays_ms": lbt_backoff_delays_ms,
             "lbt_channel_busy": lbt_channel_busy,
-			"iata": iata,
-			"observer": observer,
         }
 
     def _get_drop_reason(self, packet: Packet) -> str:
