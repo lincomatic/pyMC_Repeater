@@ -501,7 +501,7 @@ class RepeaterHandler(BaseHandler):
         lbt_attempts: int = 0,
         lbt_backoff_delays_ms=None,
         lbt_channel_busy: bool = False,
-        iata: Optiona[str],
+        iata: Optional[str],
         observer: Optional[str],
     ) -> dict:
         """Build a single packet_record dict for storage and recent_packets."""
