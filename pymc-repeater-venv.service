@@ -1,0 +1,18 @@
+[Unit]
+Description=pyMC Repeater Service
+After=network.target
+
+[Service]
+Type=simple
+User=repeater
+Group=repeater
+WorkingDirectory=/opt/pymc_repeater
+# Direct path to the venv python ensures all dependencies are found
+ExecStart=/opt/pymc_repeater/venv/bin/python3 -m repeater.main
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/pymc_repeater/service.log
+StandardError=append:/var/log/pymc_repeater/service.log
+
+[Install]
+WantedBy=multi-user.target
